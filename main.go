@@ -16,7 +16,7 @@ const (
 	WRITE  ChangeEvent = 1
 )
 
-func merge()
+type Changes map[string]ChangeEvent
 
 func main() {
 	// folderPath, err := osext.ExecutableFolder()
@@ -39,40 +39,50 @@ func main() {
 }
 
 func serve() {
-
+	log.Println("serving...")
 }
 
-// port := os.Getenv("PORT")
-// if port == "" {
-// 	port = "9090"
-// }
-//
-// httpErr := http.ListenAndServe(":"+port, nil)
-// if httpErr != nil {
-// 	log.Fatal("ListenAndServe: ", httpErr)
-// }
-
-func coalesce(in <-chan fsnotify.Event, out chan<- fsnotify.Event, period int) {
-	var event ChangeEvent
+func coalesce(in <-chan fsnotify.Event, out chan<- Changes, merge func(Changes, fsnotify.Event), period time.Duration) {
+	changes := make(Changes)
 	timer := time.NewTimer(0)
 
 	var timerCh <-chan time.Time
-	var outCh chan<- Event
+	var outCh chan<- Changes
 
 	for {
+		log.Println("changes", changes)
 		select {
 		case e := <-in:
-			event = mergeFSEvent(event, e)
+			log.Println("receiving")
+			merge(changes, e)
 			if timerCh == nil {
 				timer.Reset(period * time.Millisecond)
 				timerCh = timer.C
 			}
 		case <-timerCh:
+			log.Println("ticking")
 			outCh = out
 			timerCh = nil
-		case outCh <- event:
-			event = NewEvent()
+		case outCh <- changes:
+			log.Println("changes outputed")
+			changes = make(Changes)
 			outCh = nil
+		}
+	}
+}
+
+func slowReceive(in <-chan Changes) {
+	for {
+		beforemap := <-in
+		log.Println("beforemap:", beforemap)
+		for k := range beforemap {
+			log.Println(k, beforemap[k])
+		}
+		time.Sleep(1500 * time.Millisecond)
+
+		log.Println("aftermap:", beforemap)
+		for k := range beforemap {
+			log.Println(k, beforemap[k])
 		}
 	}
 }
@@ -86,24 +96,49 @@ func mirror(folderPath string) {
 	defer watcher.Close()
 
 	done := make(chan bool)
-	go func() {
-		for {
-			select {
-			case event := <-watcher.Events:
-				log.Println("event:", event)
-				if event.Op&fsnotify.Write == fsnotify.Write {
-					log.Println("modified file:", event.Name)
-				}
-			case err := <-watcher.Errors:
-				log.Println("error:", err)
-			}
-		}
-	}()
 
 	err = watcher.Add(folderPath)
 	if err != nil {
 		log.Fatal(err)
 	}
+
+	output := make(chan Changes)
+	go coalesce(watcher.Events, output, func(changes Changes, event fsnotify.Event) {
+		log.Println("coalescing", event)
+		if event.Op == fsnotify.Write || event.Op == fsnotify.Create {
+			(changes)[event.Name] = WRITE
+		} else if event.Op == fsnotify.Remove || event.Op == fsnotify.Rename {
+			(changes)[event.Name] = DELETE //TODO make rename more efficient by dealign with it specifically
+		}
+
+	}, 500)
+
+	go slowReceive(output)
+
+	// 	go func() {
+	// 		for {
+	// 			select {
+	// 			case event := <-watcher.Events:
+	// 				log.Println("event:", event)
+	// 				if event.Op&fsnotify.Write == fsnotify.Write {
+	// 					log.Println("modified file:", event.Name)
+	// 				}
+	// 			case err := <-watcher.Errors:
+	// 				log.Println("error:", err)
+	// 			}
+	// 		}
+	// 	}()
+
 	<-done
 
 }
+
+// port := os.Getenv("PORT")
+// if port == "" {
+// 	port = "9090"
+// }
+//
+// httpErr := http.ListenAndServe(":"+port, nil)
+// if httpErr != nil {
+// 	log.Fatal("ListenAndServe: ", httpErr)
+// }
