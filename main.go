@@ -1,7 +1,10 @@
 package main
 
 import (
+	"fmt"
+	"html"
 	"log"
+	"net/http"
 	"os"
 	"time"
 
@@ -40,6 +43,19 @@ func main() {
 
 func serve() {
 	log.Println("serving...")
+	port := os.Getenv("PORT")
+	if port == "" {
+		port = "9090"
+	}
+
+	http.Handle("/", http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		fmt.Fprintf(w, "Hello : %q", html.EscapeString(r.URL.Path))
+	}))
+
+	httpErr := http.ListenAndServe(":"+port, nil)
+	if httpErr != nil {
+		log.Fatal("ListenAndServe: ", httpErr)
+	}
 }
 
 func coalesce(in <-chan fsnotify.Event, out chan<- Changes, merge func(Changes, fsnotify.Event), period time.Duration) {
@@ -115,19 +131,13 @@ func mirror(folderPath string) {
 
 	go slowReceive(output)
 
-	// 	go func() {
-	// 		for {
-	// 			select {
-	// 			case event := <-watcher.Events:
-	// 				log.Println("event:", event)
-	// 				if event.Op&fsnotify.Write == fsnotify.Write {
-	// 					log.Println("modified file:", event.Name)
-	// 				}
-	// 			case err := <-watcher.Errors:
-	// 				log.Println("error:", err)
-	// 			}
-	// 		}
-	// 	}()
+	go func() {
+		for {
+
+			err := <-watcher.Errors
+			log.Println("error:", err)
+		}
+	}()
 
 	<-done
 
