@@ -1,0 +1,19 @@
+{
+	"ImportPath": "github.com/wighawag/mirror",
+	"GoVersion": "go1.4.2",
+	"Deps": [
+		{
+			"ImportPath": "github.com/gorilla/websocket",
+			"Rev": "a3ec486e6a7a41858210b0fc5d7b5df593b3c4a3"
+		},
+		{
+			"ImportPath": "gopkg.in/fsnotify.v1",
+			"Comment": "v1.2.0",
+			"Rev": "96c060f6a6b7e0d6f75fddd10efeaca3e5d1bcb0"
+		},
+		{
+			"ImportPath": "gopkg.in/igm/sockjs-go.v2/sockjs",
+			"Rev": "c43832e816ba94e36b9cc13c97d9832a66f49821"
+		}
+	]
+}
