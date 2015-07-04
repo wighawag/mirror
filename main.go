@@ -28,6 +28,7 @@ const (
 type Changes map[string]ChangeEvent
 
 var port string
+var folderPath string
 
 func main() {
 	port = ""
@@ -37,10 +38,10 @@ func main() {
 	}
 	log.Println("port", port)
 
-	path := "./"
+	folderPath = "./"
 
 	if len(os.Args) > 1 {
-		path = os.Args[1]
+		folderPath = os.Args[1]
 	}
 
 	serverAddresses := []string{"http://localhost.:" + port}
@@ -51,7 +52,7 @@ func main() {
 		}
 	}
 
-	mirror(path, serverAddresses)
+	mirror(serverAddresses)
 
 }
 func checkLastModified(w http.ResponseWriter, r *http.Request, modtime time.Time) bool {
@@ -194,7 +195,7 @@ func sendCoalescedChanges(in <-chan Changes, serverAddresses []string) {
 	}
 }
 
-func newfileUploadRequest(serverAddress, paramName, path string) (*http.Request, error) {
+func newfileUploadRequest(url, paramName, path string) (*http.Request, error) {
 	file, err := os.Open(path)
 	if err != nil {
 		return nil, err
@@ -214,7 +215,6 @@ func newfileUploadRequest(serverAddress, paramName, path string) (*http.Request,
 		return nil, err
 	}
 	contentType := writer.FormDataContentType()
-	url := serverAddress + "/" + path
 	log.Println("new request on ", url)
 	req, reqErr := http.NewRequest("PUT", url, body)
 	if reqErr == nil {
@@ -225,20 +225,22 @@ func newfileUploadRequest(serverAddress, paramName, path string) (*http.Request,
 
 func sendChange(path string, change ChangeEvent, serverAddresses []string) {
 	path = filepath.ToSlash(path)
+	serverPath, _ := filepath.Rel(folderPath, path)
 	log.Println("sending change ", path, change)
+
 	for _, serverAddress := range serverAddresses { //TODO parralelize
+		url := serverAddress + "/" + serverPath
 		if change == WRITE {
-			sendFileToServer(serverAddress, path)
+			sendFileToServer(url, path)
 		} else if change == DELETE {
-			removeFileFromServer(serverAddress, path)
+			removeFileFromServer(url, path)
 		}
 
 	}
 
 }
 
-func removeFileFromServer(serverAddress, path string) {
-	url := serverAddress + "/" + path
+func removeFileFromServer(url, path string) {
 	req, reqErr := http.NewRequest("DELETE", url, nil)
 	if reqErr != nil {
 		log.Println("error req", reqErr)
@@ -250,8 +252,8 @@ func removeFileFromServer(serverAddress, path string) {
 	}
 }
 
-func sendFileToServer(serverAddress, path string) {
-	request, err := newfileUploadRequest(serverAddress, "file", path)
+func sendFileToServer(url, path string) {
+	request, err := newfileUploadRequest(url, "file", path)
 	if err != nil {
 		log.Fatal(err)
 	}
@@ -272,7 +274,7 @@ func sendFileToServer(serverAddress, path string) {
 	}
 }
 
-func mirror(folderPath string, serverAddresses []string) {
+func mirror(serverAddresses []string) {
 	serve()
 
 	done := make(chan bool)
