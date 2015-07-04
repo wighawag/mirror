@@ -9,5 +9,5 @@ go get github.com/skelterjohn/rerun
 ```
 
 ```
-rerun github.com/wighawag/mirror serve
+rerun github.com/wighawag/mirror [<folderPath>] [on <server address>] 
 ```
