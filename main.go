@@ -72,10 +72,15 @@ func checkLastModified(w http.ResponseWriter, r *http.Request, modtime time.Time
 	return false
 }
 
+type InMemoryFile struct {
+	Bytes []byte
+	Time  time.Time
+}
+
 func serve() {
 	log.Println("serving...")
 
-	memory := make(map[string][]byte)
+	memory := make(map[string]InMemoryFile)
 
 	var sessions []sockjs.Session
 	http.Handle("/_sockjs/", sockjs.NewHandler("/_sockjs", sockjs.DefaultOptions, func(session sockjs.Session) {
@@ -111,7 +116,7 @@ func serve() {
 			}
 			log.Println("FileBytes", string(fileBytes))
 
-			memory[path] = fileBytes
+			memory[path] = InMemoryFile{Bytes: fileBytes, Time: time.Now()}
 			for _, session := range sessions {
 				session.Send(path)
 			}
@@ -120,8 +125,8 @@ func serve() {
 			log.Println("Getting...")
 			value, ok := memory[path]
 			if ok {
-				if !checkLastModified(w, r, time.Now()) { //TODO use the time
-					w.Write(value)
+				if !checkLastModified(w, r, value.Time) { //TODO use the time
+					w.Write(value.Bytes)
 				}
 
 			} else {
