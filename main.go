@@ -119,7 +119,7 @@ func serve() {
 
 			memory[path] = InMemoryFile{Bytes: fileBytes, Time: time.Now()}
 			for _, session := range sessions {
-				session.Send(path)
+				session.Send("write:" + path)
 			}
 
 		} else if r.Method == "GET" {
@@ -138,6 +138,9 @@ func serve() {
 		} else if r.Method == "DELETE" {
 			log.Println("Deleting...")
 			delete(memory, path)
+			for _, session := range sessions {
+				session.Send("delete:" + path)
+			}
 		} else {
 			log.Println("NOT HANDLED")
 		}
@@ -226,6 +229,7 @@ func newfileUploadRequest(url, paramName, path string) (*http.Request, error) {
 func sendChange(path string, change ChangeEvent, serverAddresses []string) {
 	path = filepath.ToSlash(path)
 	serverPath, _ := filepath.Rel(folderPath, path)
+	serverPath = filepath.ToSlash(serverPath)
 	log.Println("sending change ", path, change)
 
 	for _, serverAddress := range serverAddresses { //TODO parralelize
@@ -315,10 +319,22 @@ func mirror(serverAddresses []string) {
 	output := make(chan Changes)
 	go coalesce(watcher.Events, output, func(changes Changes, event fsnotify.Event) {
 		log.Println("coalescing", event)
-		if event.Op == fsnotify.Write || event.Op == fsnotify.Create {
-			(changes)[event.Name] = WRITE
-		} else if event.Op == fsnotify.Remove || event.Op == fsnotify.Rename {
-			(changes)[event.Name] = DELETE //TODO make rename more efficient by dealign with it specifically
+		skip := false
+		stat, statErr := os.Stat(event.Name)
+		if statErr == nil {
+			if stat.IsDir() { //TODO check sub folder and files : are they trigering events o delete from a parent
+				skip = true
+				log.Println("skip Folder")
+			}
+		} else {
+			log.Println(statErr)
+		}
+		if !skip {
+			if event.Op == fsnotify.Write || event.Op == fsnotify.Create {
+				(changes)[event.Name] = WRITE
+			} else if event.Op == fsnotify.Remove || event.Op == fsnotify.Rename {
+				(changes)[event.Name] = DELETE //TODO make rename more efficient by dealign with it specifically
+			}
 		}
 
 	}, 500)
