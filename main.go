@@ -15,6 +15,7 @@ import (
 
 	//"github.com/kardianos/osext"
 	"gopkg.in/fsnotify.v1"
+	"gopkg.in/igm/sockjs-go.v2/sockjs"
 )
 
 type ChangeEvent int
@@ -53,11 +54,41 @@ func main() {
 	mirror(path, serverAddresses)
 
 }
+func checkLastModified(w http.ResponseWriter, r *http.Request, modtime time.Time) bool {
+	if modtime.IsZero() {
+		return false
+	}
+
+	// The Date-Modified header truncates sub-second precision, so
+	// use mtime < t+1s instead of mtime <= t to check for unmodified.
+	if t, err := time.Parse(http.TimeFormat, r.Header.Get("If-Modified-Since")); err == nil && modtime.Before(t.Add(1*time.Second)) {
+		h := w.Header()
+		delete(h, "Content-Type")
+		delete(h, "Content-Length")
+		w.WriteHeader(http.StatusNotModified)
+		return true
+	}
+	w.Header().Set("Last-Modified", modtime.UTC().Format(http.TimeFormat))
+	return false
+}
 
 func serve() {
 	log.Println("serving...")
 
 	memory := make(map[string][]byte)
+
+	var sessions []sockjs.Session
+	http.Handle("/_sockjs/", sockjs.NewHandler("/_sockjs", sockjs.DefaultOptions, func(session sockjs.Session) {
+		log.Println("SOCKJS : getting session", session)
+		sessions = append(sessions, session)
+		// for {
+		// 	if msg, err := session.Recv(); err == nil {
+		// 		session.Send(msg)
+		// 		continue
+		// 	}
+		// 	break
+		// }
+	}))
 
 	http.Handle("/", http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		log.Printf("handling response :  %q", html.EscapeString(r.URL.Path))
@@ -81,10 +112,25 @@ func serve() {
 			log.Println("FileBytes", string(fileBytes))
 
 			memory[path] = fileBytes
+			for _, session := range sessions {
+				session.Send(path)
+			}
 
 		} else if r.Method == "GET" {
-			w.Write(memory[path])
+			log.Println("Getting...")
+			value, ok := memory[path]
+			if ok {
+				if !checkLastModified(w, r, time.Now()) { //TODO use the time
+					w.Write(value)
+				}
+
+			} else {
+				w.WriteHeader(404)
+				fmt.Fprint(w, "not found : "+r.URL.String())
+			}
+
 		} else if r.Method == "DELETE" {
+			log.Println("Deleting...")
 			delete(memory, path)
 		} else {
 			log.Println("NOT HANDLED")
@@ -136,14 +182,14 @@ func sendCoalescedChanges(in <-chan Changes, serverAddresses []string) {
 	for {
 		changes := <-in
 		log.Println("beforemap:", changes)
-		for k := range changes {
+		for k := range changes { //TODO paralelize
 			sendChange(k, changes[k], serverAddresses)
 		}
 		time.Sleep(1500 * time.Millisecond)
 	}
 }
 
-func newfileUploadRequest(uri, paramName, path string) (*http.Request, error) {
+func newfileUploadRequest(serverAddress, paramName, path string) (*http.Request, error) {
 	file, err := os.Open(path)
 	if err != nil {
 		return nil, err
@@ -163,7 +209,7 @@ func newfileUploadRequest(uri, paramName, path string) (*http.Request, error) {
 		return nil, err
 	}
 	contentType := writer.FormDataContentType()
-	url := uri + "/" + path
+	url := serverAddress + "/" + path
 	log.Println("new request on ", url)
 	req, reqErr := http.NewRequest("PUT", url, body)
 	if reqErr == nil {
@@ -176,12 +222,30 @@ func sendChange(path string, change ChangeEvent, serverAddresses []string) {
 	path = filepath.ToSlash(path)
 	log.Println("sending change ", path, change)
 	for _, serverAddress := range serverAddresses { //TODO parralelize
-		requestOnServer(serverAddress, path)
+		if change == WRITE {
+			sendFileToServer(serverAddress, path)
+		} else if change == DELETE {
+			removeFileFromServer(serverAddress, path)
+		}
+
 	}
 
 }
 
-func requestOnServer(serverAddress, path string) {
+func removeFileFromServer(serverAddress, path string) {
+	url := serverAddress + "/" + path
+	req, reqErr := http.NewRequest("DELETE", url, nil)
+	if reqErr != nil {
+		log.Println("error req", reqErr)
+	}
+	client := &http.Client{}
+	_, err := client.Do(req)
+	if err != nil {
+		log.Println("request sending error", err)
+	}
+}
+
+func sendFileToServer(serverAddress, path string) {
 	request, err := newfileUploadRequest(serverAddress, "file", path)
 	if err != nil {
 		log.Fatal(err)
