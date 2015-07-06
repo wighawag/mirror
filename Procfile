@@ -1,1 +1,1 @@
-'web: mirror' 
+web: mirror
